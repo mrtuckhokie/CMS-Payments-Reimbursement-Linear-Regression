@@ -1,0 +1,398 @@
+---
+title: "An Analysis of CMS Average Payments with a Focus on Internal Medicine"
+author: "Marshall Tuck"
+date: "12/14/2019"
+output:
+  pdf_document:
+  highlight: haddock
+keep_tex: no
+number_sections: no
+html_document:
+  df_print: paged
+geometry: margin = 0.5in
+header-includes:
+  - \usepackage{amsmath}
+editor_options:
+  chunk_output_type: console
+documentclass: article
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+# This is the setup chunk
+#  Here you can set global options for the entire document
+
+library(knitr) # I recommend doing this
+library(pander)
+
+# Although you can call functions from a library using the following notation
+#  without loading the entire library.
+knitr::opts_chunk$set(echo = TRUE, 
+                      comment = NA, # Recommended
+                      fig.path = "./figures/",  # Store all figures here in relative path (make the folder first)
+                      fig.align = "center",
+                      fig.width = 7, # default figure width in inches
+                      fig.height = 7, # default figure height in inches
+                      message = FALSE, # Turn off load messages
+                      warning = FALSE # Turn off warnings
+                      )
+
+```
+  
+\clearpage
+
+```{r include=FALSE}
+setwd("~/Documents/Statistics/Programming STAT 5054/Final Exam/STAT5054")
+```
+
+```{r, echo=FALSE}
+library(dplyr)
+library(Stack)
+library(kableExtra)
+load("~/Documents/Statistics/Programming STAT 5054/Final Exam/STAT5054/medicare.data.rdata")
+
+set.seed(0)
+sampleclaims<-claims%>%
+  sample_n(10000)
+
+```
+
+# Overview
+Medicare.data.rdata is an R data file consisting of three data frames: 'claims', 'hcpcs', and 'providers'. All are publicly available through the Centers for Medicare and Medicaid Services. This paper will provide an analysis of these three data tables in the following sections titled Data Overview, Exploratory Data Analysis and Research Questions, Statistical Analysis, and Conclusions and Future Work.
+
+In the Data Overview Section, I will explore each data frame provided in the .RData file. 
+
+In Exploratory Data Analysis and Research Questions, I will conduct exploratory analysis and share summary data regarding each data frame provided in the.RData file. I will also explore the following relationships:
+the effect of 'entity.code' and 'provider.type' on 'avg.chrg.amt', 'allowed', and 'avg.payment' 
+ 
+In Statistical Analysis, I will conduct statical analysis on the impact of provider type and entity code on average charge amount. I will develop an SLR model for medicare payments 'avg.payment' using 'entity.code' and 'prov.type'. We will also explore how mean payments for a common prov.type have progressed from 2012-2016, and then make predictions for 2017. I will then compare the predicted value to the actual value.  
+
+In Section 3 and 4 I will also research the following question: which medical licensure (for example, M.D, D.O., PT, etc.) provides the highest financial reward based on the Medicare data?
+
+
+# Section 1: Data Overview
+## Claims
+Claims data presents nearly 57 million claims for Medicare reimbursement for the following key variables: year, NPI (a provider identifier), zip code of provider, state of provider, HCPCS service code, service count, average allowed amount, average charge amount, and average payment. 
+
+## HCPCS
+HCPCS presents 7527 hcpcs codes, which are unique treatment identifiers, and the description of the treatment within that code. 
+
+## Providers
+Providers presents the >1.2 million providers eligible to submit Medicare claims, including their NPI number (a unique provider identifier), the licensing credentials, gender of the provider, entity code, and provider type/specialty.
+
+## Approach to Data
+A sample data population was created that is based on a sample without replacement of 10,000 claims from the claims data set. This was then joined with hcpcs data set and providers data set to get a full picture of the sampled data. All references to data, summary statistics, and prediction in this paper is based on the sampled data of 10,000 claims records. 
+
+Problems in manipulating the data were due to the .RData size and the need to clean the data. ~57 million claims would not quickly or easily merge with the provider data set or hcpcs data set. In addition, credential data was not consistent; for example, all combinations of "M.D.", "M.D", and "MD" were coerced to "MD". This pattern was repeated for "DO". Due to outside research "PA-C" and "PA" are equivalent titles and were coerced to "PA". Like data munging occurred for other credentials.   
+
+```{r, include=FALSE}
+
+sampleclaimsproviders<-left_join(sampleclaims,providers,"NPI")
+fullsample<-left_join(sampleclaimsproviders,hcpcs,"hcpcs.code")
+
+fullsample$credentials[fullsample$credentials=="M.D."]<-"MD"
+fullsample$credentials[fullsample$credentials=="M.D"]<-"MD"
+fullsample$credentials[fullsample$credentials=="M.D,"]<-"MD"
+fullsample$credentials[fullsample$credentials=="D.O."]<-"DO"
+fullsample$credentials[fullsample$credentials=="PA-C"]<-"PA"
+fullsample$credentials[fullsample$credentials=="N.P."]<-"NP"
+fullsample$credentials[fullsample$credentials=="D.O"]<-"DO"
+fullsample$credentials[fullsample$credentials=="OD"]<-"DO"
+fullsample$credentials[fullsample$credentials=="O.D"]<-"DO"
+fullsample$credentials[fullsample$credentials=="DC OME"]<-"DC"
+fullsample$credentials[fullsample$credentials=="P.T."]<-"PT"
+fullsample$credentials[fullsample$credentials=="P.A.-C"]<-"PA"
+fullsample$prov.type<-as.factor(fullsample$prov.type)
+
+```
+
+# Section 2: Exploratory Data Analysis and Research Questions
+In our first data summary below, we see no clear concentration of NPI frequency in our data. The top frequency NPI number only occurrs three times in our sample of 10,000 claims. Many NPI numbers occur only once in 10,000 claims. 
+
+```{r, echo=FALSE}
+kable(fullsample %>%
+  group_by(NPI)%>%
+  summarize(Percentage_NPI=(length(NPI)*100)/length(fullsample$ID), count=length(NPI))%>%
+  arrange(desc(Percentage_NPI))%>%
+  head(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+kable(fullsample %>%
+  group_by(NPI)%>%
+  summarize(Percentage_NPI=length(NPI)/length(fullsample$ID), count=length(NPI))%>%
+  arrange((Percentage_NPI))%>%
+  head(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+```
+
+Below in Figure 1 is time-series analysis showing the Total Reimbursement per year for I and O entity.codes. In Figure 2 is time-series analysis showing the top 5 prov.types in historical reimbursement money per year. 
+
+```{r, echo=FALSE}
+library(ggplot2)
+YearlypaymentIO<-fullsample %>%
+  group_by(year, entity.code)%>%
+  summarize(Total_reimbursement=sum(avg.payment*svc.count))
+
+ggplot(YearlypaymentIO, aes(x=year, y=Total_reimbursement, group=entity.code, colour=entity.code))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y="Total Reimbursement $", title="Total Reimbursement by Year by Entity Code", x="Year", caption="Figure 1")
+
+
+top5<-fullsample%>%
+  group_by(prov.type)%>%
+  summarize(Total=sum(avg.payment*svc.count))%>%
+  arrange(desc(Total))%>%
+  head(5)
+
+Yearlypaymentprov<-fullsample %>%
+  filter(prov.type==c("Cardiology","Ophthalmology","Internal Medicine","Family Practice","Diagnostic Radiology"))%>%
+  group_by(year, prov.type)%>%
+  summarize(Total_reimbursement=sum(avg.payment*svc.count))%>%
+  arrange(desc(Total_reimbursement), .by_group=T)
+
+ggplot(Yearlypaymentprov, aes(x=year, y=Total_reimbursement, group=prov.type, colour=prov.type))+
+  geom_point()+
+  geom_line()+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y="Total Reimbursement $", title="Top 5 Provider Type Reimbursement by Year ", x="Year", caption="Figure 2", color="Provider Type")
+
+
+```
+
+Of the most frequent treatments performed for Medicare reimbursement, code 99213 (15 minute office visit) was performed the most with a mean payment of \$46.72, and the most expensive procedure occurring one time was code J7192 (Factor viii - antihemophilic factor) with a mean payment of \$16474. 
+
+```{r, echo=FALSE}
+kable(fullsample%>%
+  group_by(hcpcs.code, hcpcs.description)%>%
+  summarize(freq_hcpcs=length(hcpcs.code), Mean_Payment=mean(avg.payment))%>%
+  arrange(desc(freq_hcpcs))%>%
+  head(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+kable(fullsample%>%
+  group_by(hcpcs.code, hcpcs.description, avg.payment)%>%
+  summarize(freq_hcpcs=length(hcpcs.code), Mean_Payment=mean(avg.payment))%>%
+  arrange(desc(avg.payment))%>%
+  head(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center", latex_options="scale_down")
+
+```
+
+Further reviewing summary statistics, we see that MDs receive the highest total payment from Medicare (\$53543291), factoring in all types of procedures. M.B.B.S receive the lowest average payment from Medicare (\$18.15) factoring in all procedures performed. 
+
+```{r, echo=FALSE}
+
+kable(fullsample%>%
+  group_by(credentials)%>%
+  summarize(total_payment_amount=sum(avg.payment*svc.count))%>%
+  arrange(desc(total_payment_amount))%>%
+  top_n(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+kable(fullsample%>%
+  group_by(credentials)%>%
+  summarize(total_payment_amount=sum(avg.payment*svc.count))%>%
+  arrange(desc(total_payment_amount))%>%
+  tail(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+```
+
+Below shows summary statistics of the top ten greatest counts of credentials, provider type, and entity code in our sample. The most frequent credential is MD, the most frequent prov.type is Diagnostic Radiology followed by Internal Medicine, and the most frequent entity.code is I.
+
+```{r, echo=FALSE}
+
+kable(fullsample%>%
+  group_by(credentials)%>%
+  summarize(credential_count = length(credentials))%>%
+  arrange(desc(credential_count))%>%
+  head(10), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+
+kable(fullsample%>%
+  group_by(prov.type)%>%
+  summarize(prov_count = length(prov.type))%>%
+  arrange(desc(prov_count))%>%
+  head(10), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+kable(fullsample%>%
+  group_by(entity.code)%>%
+  summarize(entity_count = length(entity.code))%>%
+  arrange(desc(entity_count))%>%
+  head(10), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+
+```
+
+The grid arrange below shows the effect of provider type and entity code on 1 of 3 response variables: Average Charge Amount, Average Allowed Amount, and Average Payment. On the left shows a concentration of charges, allowed amounts, and payment amount among a few providers by type. On the right, we see a narrow box-and-whiskers plot, with high outliers for only a few Entity Codes of type "Entity". 
+
+```{r, echo=FALSE}
+library(ggplot2)
+library(gridExtra)
+
+p1<- ggplot(data=fullsample, aes(x=prov.type, y=avg.chrg.amt, fill=prov.type))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  labs(x="Provider Type", y="Average Charge Amount $", title="Average Charge Amount by Provider Type", x="Provider Type")+
+  guides(fill=FALSE)+
+  theme(axis.text.x = element_blank())
+
+p2<-ggplot(data=fullsample, aes(x=entity.code, y=avg.chrg.amt, fill=entity.code))+
+  geom_boxplot()+
+  theme_bw()+
+  labs(x="Provider Type", y="Average Charge Amount $", title="Boxplot of Average Charge Amount by Entity Code")
+
+p3<- ggplot(data=fullsample, aes(x=prov.type, y=avg.allowed.amt, fill=prov.type))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  labs(y="Average Allowed Amount $", title="Average Allowed Amount by Provider Type", x="Provider Type")+
+  guides(fill=FALSE)+
+  theme(axis.text.x = element_blank())
+
+p4<-ggplot(data=fullsample, aes(x=entity.code, y=avg.allowed.amt, fill=entity.code))+
+  geom_boxplot()+
+  theme_bw()+
+  labs(y="Average Allowed Amount $", title="Boxplot of Average Allowed Amount by Entity Code")+
+  theme(axis.text.x = element_blank())
+
+p5<- ggplot(data=fullsample, aes(x=prov.type, y=avg.payment, fill=prov.type))+
+  geom_bar(stat="identity")+
+  theme_bw()+
+  labs(y="Average Payment $", title="Average Payment Amount by Provider Type")+
+  guides(fill=FALSE)+
+  theme(axis.text.x = element_blank())
+
+p6<-ggplot(data=fullsample, aes(x=entity.code, y=avg.payment, fill=entity.code))+
+  geom_boxplot()+
+  theme_bw()+
+  labs(y="Average Payment $", title="Boxplot of Average Payment Amount by Entity Code")+
+  theme(axis.text.x = element_blank())
+
+grid.arrange(p1, p2, p3, p4, p5, p6, nrow=3, ncol=2)
+
+```
+
+Further, a research question I posed in the Overview asks which is the best credential to pursue. Based on the table below, MD appears to be the most financially rewarding choice - MD have the highest total reimbursement of any credential.
+```{r, echo=FALSE}
+kable(fullsample%>%
+  group_by(credentials)%>%
+  mutate(Total_Reimbursement=avg.payment*svc.count)%>%
+  summarize(Total_Reimbursement=sum(Total_Reimbursement))%>%
+  arrange(desc(Total_Reimbursement))%>%
+  head(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+```
+
+However, this does not factor in the cost of performing the services (which we can assume is related to the Amount Charged Value). In finding the difference between the payment received from medicare and the charged amount from the provider, we see that all credentials have higher amounts charged than reimbursed. The credential that minimizes this loss is combined MSN, FNP. Below, the data is represented as $$(avg.payment * count services) - (avg.charge * count services)$$
+
+Charged amount will always be equal to or greater than payment amount. So, below, the negative value closest to zero is the value that minimizes the "losses" to provide the services.
+
+```{r, echo=FALSE}
+
+kable(fullsample%>%
+  group_by(credentials)%>%
+  mutate(Profit_Loss=(avg.payment*svc.count)-(avg.chrg.amt*svc.count))%>%  
+  summarize(Total_Profit_Loss=sum(Profit_Loss))%>%
+  arrange((Total_Profit_Loss))%>%
+  tail(3), format="latex", booktabs=T)%>%
+  kable_styling(position="center")
+```
+
+# Section 3: Statistical Analysis of Internal Medicine Provider Type
+
+In order to create an SLR model relationship, I first reduced the prov.types in my data into two values: "Internal Medicine" and "Not Internal Medicine". This would allow us to clearly state our coefficients and predict values for only Internal Medicine in a focused way.
+
+```{r, echo=FALSE}
+fullsample$prov.type<-as.character(fullsample$prov.type)
+fullsample$prov.type[fullsample$prov.type!="Internal Medicine"]<-"Not Internal Medicine"
+fullsample$prov.type<-as.factor(fullsample$prov.type)
+```
+
+In an explanatory model of relating avg.payment to entity.code and prov.type, we find an ANOVA analysis calculating a significant P Value for prov.type (.005383). and a signficant P Valye for entity.code (1.358e-14). We conclude that there is sufficient sample evidence to show prov.type and entity.code have a significant impact on avg.payment.
+```{r, echo=FALSE}
+library(caret)
+aovfit<-aov(avg.payment~prov.type+entity.code, data=fullsample)
+anova(aovfit)
+```
+
+Formulating a model to show the effect of prov.type and entity.code on avg.payment, we look to reseach the below relationship:
+$$avg.payment \sim prov.type + entity.code$$
+
+In running summary data for this linear fit, in relation to Entity Code and provide type, we find the following coefficients:
+
+```{r, echo=FALSE}
+modfit<-lm(avg.payment~prov.type+entity.code, data=fullsample)
+summary(modfit)
+```
+
+With concern to prov.types of Internal Medicine, we can express the relationship in the following way:
+
+$$avg.payment= 59.183+81.42 *entity.code:O  +13.882*prov.type:Not Internal Medicine$$
+
+We find an R-squard value of .007, meaning that .7% of avg.payment can be attributed to our model relationship which is not a high correlation. There are other values, for instance other prov. types that were coerced to "Not Internal Medicine", that better relate to our avg.price.  
+
+```{r, echo=FALSE}
+summary(modfit)$r.squared
+```
+
+
+Below is the ECDF and PDF of the Internal Medicine prov.type from 2012-2016 and from 2017. Both distirbutions appears centered around zero and symmetric, following a normal distribution around each mean. A long tail exists to the outer end showing extreme avg.payments for some procedures. A log distribution was applied to scale down the extreme values. We proceed with a prediction method. 
+```{r, echo=FALSE}
+sample1216<-subset(fullsample, year!=c("2017")&prov.type=="Internal Medicine")
+plot(ecdf(log(sample1216$avg.payment)), las=1, main="ECDF of Internal Medicine Avg.Payment from 2012-2016")
+
+
+x<-log(sample1216$avg.payment)
+y<-dnorm(x)
+plot(x,y, xlim=c(-5,5), main="PDF of Log Transformed Average Payment for Internal Medicine from 2012-2016")
+
+
+sample17<-subset(fullsample, year=="2017"&prov.type=="Internal Medicine")
+plot(ecdf(log(sample17$avg.payment)), las=1, main="ECDF of Internal Medicine Avg.Payment from 2017")
+
+x<-log(sample17$avg.payment)
+y<-dnorm(x)
+plot(x,y,xlim=c(-5,5),main="PDF of Log Transformed Average Payment for Internal Medicine from 2017")
+
+```
+## Prediction of Internal Medicine Avg. Payment
+
+Based on our linear model above, we would expect 2017 average payments to Internal Medicine providers with entity.code = "I" to equal $$avg.payment= 59.183+81.42 *0 + 13.882*0 = 59.183$$ 
+
+From Figure 4 below we see the expected value of Internal Medicine average payments in 2017 is \$59.1833, and the actual value is \$58.8. 
+
+```{r, echo=FALSE}
+
+IMcompare<-fullsample%>%
+  filter(entity.code=="I")%>%
+  group_by(year, prov.type)%>%
+  summarize(Mean=mean(avg.payment))
+
+ggplot(IMcompare, aes(x=year, y=Mean, colour=prov.type))+
+  geom_point()+
+  geom_line(group=IMcompare$prov.type)+
+  theme_bw()+
+  labs(x="Year", y="Mean Average Payment $ for Internal Medicine", title="Avg. Payment for I Entity. Code")+
+  labs(color='Provider Type', caption="Figure 4")+
+   geom_hline(yintercept = 59.183, color="black", linetype="dashed")+
+  annotate("text", x=2.5, y=61, label="EV=59.183")
+  
+```
+
+
+# Conclusions and Future Work
+
+In the above analysis, summary statistics were reviewed and discussed, the preferred credential type was discussed, and a model was fit to the data. We find that total Medicare reimbursement is relatively stable, however there exist fluctuations within the prov.types over the years. We estbalish that the MD credential receives the highest reimbursement from Medicare, however "MSN, FNP" credential minimizes the amount "lost" based on Medicare reimbursement - Amount Charged. 
+
+We then went to conduct an SLR on entity.code and prov.type, where both variables were binary (Entity.Code = O or I, prov.type = Internal Medicine or Not Internal Medicine). We found that the expected value in 2017 was less than 1 difference from the actual mean from 2017.
+
+In the future, more analysis would be done on the cost of providing the care (as it is not clear what is reimbursed as profit or what portion is being reimbursed to "cover losses"). 
+
+Also included in future research is a full coefficient analysis of all prov.types, going further than a basic compare of "Internal Medicine" or "Not Internal Medicine" and entity.code. It would be interesting to see the expected value of average payment for any claim, given the variables within the claim (entity.code and prov.type) to understand fraudlent claims.  
